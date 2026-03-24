@@ -1,11 +1,11 @@
 {
-  "name": "learning-kit",
+  "name": "oldforrest",
   "owner": {
-    "name": "OldForrest Creative",
+    "name": "Old Forrest Consulting",
     "email": "chris@oldforrest.net"
   },
   "metadata": {
-    "description": "Codebase onboarding toolkit — study, teach, and quiz skills for learning any repo"
+    "description": "Old Forrest Consulting Claude Code plugins"
   },
   "plugins": [
     {
