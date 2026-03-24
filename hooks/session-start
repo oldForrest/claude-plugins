@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# SessionStart hook for learning-kit plugin
+# Checks onboarding progress and injects nudge/gate context if configured.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Find the repo root (walk up to find .git)
+find_repo_root() {
+    local dir="${PWD}"
+    while [ "$dir" != "/" ]; do
+        if [ -d "$dir/.git" ]; then
+            echo "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+REPO_ROOT="$(find_repo_root 2>/dev/null || echo "")"
+
+# No repo = nothing to check
+if [ -z "$REPO_ROOT" ]; then
+    echo '{}'
+    exit 0
+fi
+
+CONFIG_FILE="${REPO_ROOT}/.claude/learning-kit.json"
+PROGRESS_FILE="${REPO_ROOT}/.claude/learning/progress.json"
+PLAN_FILE="${REPO_ROOT}/.claude/learning/plan.json"
+
+# No config = repo hasn't opted in, stay silent
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo '{}'
+    exit 0
+fi
+
+# Read config values (pure bash + basic parsing to stay fast)
+# Falls back to defaults if fields are missing
+mode="nudge"
+min_topics=3
+min_quiz_score=""
+custom_message=""
+
+if [ -f "$CONFIG_FILE" ]; then
+    # Extract mode
+    m=$(grep -o '"mode"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/.*: *"\([^"]*\)".*/\1/')
+    [ -n "$m" ] && mode="$m"
+
+    # Extract min_topics_completed
+    mt=$(grep -o '"min_topics_completed"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/.*: *//')
+    [ -n "$mt" ] && min_topics="$mt"
+
+    # Extract min_quiz_score
+    mq=$(grep -o '"min_quiz_score"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/.*: *//')
+    [ -n "$mq" ] && min_quiz_score="$mq"
+
+    # Extract custom message
+    cm=$(grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | head -1 | sed 's/.*: *"\([^"]*\)".*/\1/')
+    [ -n "$cm" ] && custom_message="$cm"
+fi
+
+# Mode is off = stay silent
+if [ "$mode" = "off" ]; then
+    echo '{}'
+    exit 0
+fi
+
+# No plan yet = suggest /study
+if [ ! -f "$PLAN_FILE" ]; then
+    msg="This repo has learning-kit enabled but no learning plan exists yet. Suggest running /study to build one."
+    if [ "$mode" = "gate" ]; then
+        msg="This repo requires onboarding via learning-kit. No learning plan exists yet. DO NOT proceed with code changes. Direct the user to run /study first to create a learning plan and begin onboarding."
+    fi
+    escape_for_json() {
+        local s="$1"
+        s="${s//\\/\\\\}"
+        s="${s//\"/\\\"}"
+        s="${s//$'\n'/\\n}"
+        s="${s//$'\r'/\\r}"
+        s="${s//$'\t'/\\t}"
+        printf '%s' "$s"
+    }
+    escaped=$(escape_for_json "$msg")
+    if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+        printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+    elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+        printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+    else
+        printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+    fi
+    exit 0
+fi
+
+# Count completed topics from plan.json
+completed=0
+total=0
+if [ -f "$PLAN_FILE" ]; then
+    completed=$(grep -c '"status"[[:space:]]*:[[:space:]]*"completed"' "$PLAN_FILE" 2>/dev/null || echo "0")
+    total=$(grep -c '"id"[[:space:]]*:[[:space:]]*"t[0-9]' "$PLAN_FILE" 2>/dev/null || echo "0")
+fi
+
+# Get latest quiz score from progress.json
+latest_score=""
+if [ -f "$PROGRESS_FILE" ]; then
+    # Get the last score/total pair — rough but fast
+    scores=$(grep -o '"score"[[:space:]]*:[[:space:]]*[0-9]*' "$PROGRESS_FILE" 2>/dev/null | tail -1 | sed 's/.*: *//')
+    totals=$(grep -o '"total"[[:space:]]*:[[:space:]]*[0-9]*' "$PROGRESS_FILE" 2>/dev/null | tail -1 | sed 's/.*: *//')
+    if [ -n "$scores" ] && [ -n "$totals" ] && [ "$totals" -gt 0 ]; then
+        latest_score=$(( scores * 100 / totals ))
+    fi
+fi
+
+# Check if onboarding requirements are met
+onboarded=true
+reasons=""
+
+if [ "$completed" -lt "$min_topics" ]; then
+    onboarded=false
+    reasons="Completed ${completed}/${total} topics (minimum: ${min_topics})."
+fi
+
+if [ -n "$min_quiz_score" ] && [ -n "$latest_score" ] && [ "$latest_score" -lt "$min_quiz_score" ]; then
+    onboarded=false
+    reasons="${reasons} Latest quiz score: ${latest_score}% (minimum: ${min_quiz_score}%)."
+elif [ -n "$min_quiz_score" ] && [ -z "$latest_score" ]; then
+    onboarded=false
+    reasons="${reasons} No quiz taken yet (minimum score required: ${min_quiz_score}%)."
+fi
+
+# If onboarded, stay silent
+if [ "$onboarded" = true ]; then
+    echo '{}'
+    exit 0
+fi
+
+# Build the message
+if [ -n "$custom_message" ]; then
+    msg="$custom_message"
+elif [ "$mode" = "gate" ]; then
+    msg="ONBOARDING REQUIRED: This repo uses learning-kit for developer onboarding. ${reasons} DO NOT proceed with code changes until onboarding requirements are met. Direct the user to run /teach to continue learning or /quiz to test their knowledge."
+else
+    msg="Onboarding reminder: ${reasons} Consider running /teach to continue learning or /quiz to test your knowledge before making changes."
+fi
+
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+escaped=$(escape_for_json "$msg")
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+else
+    printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+fi
+
+exit 0
