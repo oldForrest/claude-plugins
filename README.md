@@ -37,7 +37,8 @@ Add `.claude/learning-kit.json` to your repo:
 ## Install
 
 ```bash
-claude plugins install oldForrest/learning-kit
+claude plugins marketplace add oldForrest/learning-kit
+claude plugins install learning-kit
 ```
 
 ## How it works
