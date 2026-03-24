@@ -1,0 +1,12 @@
+{
+  "name": "learning-kit",
+  "version": "0.1.0",
+  "description": "Structured codebase onboarding with /study, /teach, and /quiz skills plus a configurable SessionStart hook for team onboarding",
+  "author": {
+    "name": "OldForrest Creative",
+    "email": "chris@oldforrest.net"
+  },
+  "repository": "https://github.com/oldForrest/learning-kit",
+  "license": "MIT",
+  "keywords": ["onboarding", "learning", "teaching", "quiz", "codebase", "developer-tools"]
+}

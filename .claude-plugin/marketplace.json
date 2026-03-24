@@ -1,0 +1,19 @@
+{
+  "name": "learning-kit",
+  "owner": {
+    "name": "OldForrest Creative",
+    "email": "chris@oldforrest.net"
+  },
+  "metadata": {
+    "description": "Codebase onboarding toolkit — study, teach, and quiz skills for learning any repo"
+  },
+  "plugins": [
+    {
+      "name": "learning-kit",
+      "source": "./learning-kit",
+      "description": "Structured codebase onboarding with /study, /teach, and /quiz skills plus a configurable SessionStart hook for team onboarding",
+      "version": "0.1.0",
+      "strict": false
+    }
+  ]
+}
